@@ -397,3 +397,319 @@ Internet (Users)
 ---
 
 *Guide prepared for deploying: [Arya-Mhaske/mern-online-blog](https://github.com/Arya-Mhaske/mern-online-blog)*
+
+# 🚀 MERN Stack Deployment on AWS EC2 — Complete Guide
+
+## Prerequisites
+- AWS Account
+- GitHub Account
+- MongoDB Atlas Account (free forever at mongodb.com/atlas)
+- Your MERN project with `client/` (React) and `server/` (Express) folders
+
+---
+
+## STEP 1 — Launch EC2 Instance
+
+1. Go to **AWS Console → EC2 → Launch Instance**
+2. Fill in:
+   - **Name:** `mern-app-server`
+   - **AMI:** Ubuntu Server 22.04 LTS or 26.04 LTS (Free tier eligible)
+   - **Instance type:** `t2.micro`
+3. **Key pair:** Click "Create new key pair"
+   - Name: `mern-key`
+   - Type: RSA, Format: `.pem`
+   - ⚠️ Download and save the `.pem` file safely — you can't download it again!
+4. **Network settings → Edit → Add rules:**
+   | Type | Port | Source |
+   |------|------|--------|
+   | SSH | 22 | Anywhere (0.0.0.0/0) |
+   | HTTP | 80 | Anywhere |
+   | HTTPS | 443 | Anywhere |
+   | Custom TCP | 5000 | Anywhere |
+5. **Storage:** 8 GiB (default) or up to 30 GiB (free tier limit)
+6. Click **"Launch Instance"**
+7. Wait for **Status checks → 2/2 checks passed**
+
+---
+
+## STEP 2 — Connect to EC2 via SSH
+
+### Windows (PowerShell):
+```powershell
+cd ~/Downloads
+
+# Fix key permissions
+icacls "mern-key.pem" /inheritance:r /grant:r "$($env:USERNAME):(R)"
+
+# Connect
+ssh -i "mern-key.pem" ubuntu@<YOUR-PUBLIC-IP>
+```
+
+### Mac/Linux (Terminal):
+```bash
+cd ~/Downloads
+chmod 400 mern-key.pem
+ssh -i "mern-key.pem" ubuntu@<YOUR-PUBLIC-IP>
+```
+
+> Type `yes` when asked about fingerprint.
+> You'll see: `ubuntu@ip-xxx-xxx-xxx-xxx:~$`
+
+---
+
+## STEP 3 — Install Dependencies on EC2
+
+```bash
+# Update packages
+sudo apt update && sudo apt upgrade -y
+
+# Install Node.js 20
+curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
+sudo apt install nodejs -y
+
+# Verify
+node -v && npm -v
+
+# Install PM2 (keeps app running)
+sudo npm install -g pm2
+
+# Install Nginx (reverse proxy)
+sudo apt install nginx -y
+```
+
+---
+
+## STEP 4 — Set Up MongoDB Atlas
+
+1. Go to [mongodb.com/atlas](https://mongodb.com/atlas) → Sign up (free)
+2. Create a **Free M0 cluster**
+   - Provider: AWS
+   - Region: Mumbai (ap-south-1) or closest to you
+3. **Database Access** → Add Database User
+   - Username & Password (save these!)
+4. **Network Access** → Add IP Address → Allow Access from Anywhere (`0.0.0.0/0`)
+5. **Connect → Drivers → Node.js** → Copy connection string:
+   ```
+   mongodb+srv://<username>:<password>@cluster0.xxxxx.mongodb.net/<dbname>?appName=Cluster0
+   ```
+
+---
+
+## STEP 5 — Push Code to GitHub
+
+On your **local PC**, run in PowerShell/Terminal:
+
+```bash
+cd path/to/your/project
+
+git init
+git add .
+git commit -m "first commit"
+git branch -M main
+git remote add origin https://github.com/YOUR-USERNAME/YOUR-REPO.git
+git push -u origin main
+```
+
+> If remote already exists: `git remote set-url origin https://github.com/YOUR-USERNAME/YOUR-REPO.git`
+
+---
+
+## STEP 6 — Clone Project on EC2
+
+Back in your **SSH terminal**:
+
+```bash
+cd ~
+git clone https://github.com/YOUR-USERNAME/YOUR-REPO.git
+cd YOUR-REPO
+ls  # verify client/ and server/ folders exist
+```
+
+---
+
+## STEP 7 — Setup & Start Backend
+
+```bash
+cd ~/YOUR-REPO/server
+
+# Install dependencies
+npm install
+
+# Create environment file
+nano .env
+```
+
+Paste inside `.env`:
+```
+PORT=5000
+MONGO_URI=mongodb+srv://<username>:<password>@cluster0.xxxxx.mongodb.net/mydb?appName=Cluster0
+NODE_ENV=production
+```
+Save: **Ctrl+X → Y → Enter**
+
+```bash
+# Verify .env content
+cat .env
+
+# Start backend with PM2
+pm2 start index.js --name "mern-backend"
+
+# Save and enable auto-start on reboot
+pm2 save
+pm2 startup
+# Copy and run the command it outputs, e.g.:
+# sudo env PATH=$PATH:/usr/bin /usr/lib/node_modules/pm2/bin/pm2 startup systemd -u ubuntu --hp /home/ubuntu
+```
+
+---
+
+## STEP 8 — Build Frontend
+
+```bash
+cd ~/YOUR-REPO/client
+
+# Install dependencies
+npm install
+
+# If build fails due to Node version, reinstall node_modules:
+rm -rf node_modules package-lock.json
+npm install
+
+# Build for production
+npm run build
+# Output will be in dist/ folder
+```
+
+> ⚠️ **Important:** Update your API base URL in the React code before building.
+> Change `http://localhost:5000/api/...` to `http://<YOUR-PUBLIC-IP>/api/...`
+>
+> Quick fix with sed:
+> ```bash
+> sed -i 's|http://localhost:5000|http://<YOUR-PUBLIC-IP>|g' src/App.jsx
+> ```
+> Then rebuild: `npm run build`
+
+---
+
+## STEP 9 — Configure Nginx
+
+```bash
+sudo nano /etc/nginx/sites-available/mern-app
+```
+
+Paste this config:
+```nginx
+server {
+    listen 80;
+    server_name <YOUR-PUBLIC-IP>;
+
+    # Serve React frontend
+    location / {
+        root /home/ubuntu/YOUR-REPO/client/dist;
+        index index.html;
+        try_files $uri /index.html;
+    }
+
+    # Proxy API calls to Express backend
+    location /api/ {
+        proxy_pass http://localhost:5000;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection 'upgrade';
+        proxy_set_header Host $host;
+        proxy_cache_bypass $http_upgrade;
+    }
+}
+```
+
+Save: **Ctrl+X → Y → Enter**
+
+```bash
+# Enable the config
+sudo ln -s /etc/nginx/sites-available/mern-app /etc/nginx/sites-enabled/
+
+# Fix permissions
+sudo chmod 755 /home/ubuntu
+
+# Test and restart Nginx
+sudo nginx -t
+sudo systemctl restart nginx
+```
+
+---
+
+## STEP 10 — Access Your App 🎉
+
+Open browser and go to:
+```
+http://<YOUR-PUBLIC-IP>
+```
+
+Your MERN app is live!
+
+---
+
+## Useful Commands
+
+```bash
+# Check backend status
+pm2 status
+
+# View backend logs
+pm2 logs mern-backend --lines 30
+
+# View error logs only
+pm2 logs mern-backend --err --lines 30
+
+# Restart backend
+pm2 restart mern-backend
+
+# Test backend API
+curl http://localhost:5000/api/<your-route>
+
+# Restart Nginx
+sudo systemctl restart nginx
+
+# Check Nginx status
+sudo systemctl status nginx
+```
+
+---
+
+## Troubleshooting
+
+| Problem | Solution |
+|---------|----------|
+| SSH connection timed out | Update EC2 Security Group → SSH rule → set source to `0.0.0.0/0` |
+| 500 Internal Server Error | Run `sudo chmod 755 /home/ubuntu` then restart Nginx |
+| Failed to load data | Check API URL in React — must match your EC2 public IP |
+| MongoDB connection failed | Add `0.0.0.0/0` to MongoDB Atlas → Network Access |
+| Build failed (Vite/Node version) | Upgrade to Node 20: `curl -fsSL https://deb.nodesource.com/setup_20.x \| sudo -E bash - && sudo apt install nodejs -y` |
+| Port 5000 not responding | Check PM2 logs: `pm2 logs mern-backend --err --lines 30` |
+
+---
+
+## Cost Management
+
+| Resource | Cost |
+|----------|------|
+| t2.micro (running 24/7) | ~$8.5/month |
+| 8 GB gp3 storage | ~$0.64/month |
+| MongoDB Atlas M0 | Free forever |
+
+> 💡 **Stop your EC2 instance** when not in use to save money:
+> AWS Console → EC2 → Instances → Select instance → Instance State → Stop
+
+---
+
+## Architecture
+
+```
+User Browser
+     ↓ HTTP (port 80)
+  Nginx (reverse proxy)
+     ↓                    ↓
+React Frontend      /api/* → Express Backend (port 5000)
+(dist/ folder)              ↓
+                     MongoDB Atlas (cloud DB)
+```
