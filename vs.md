@@ -988,3 +988,100 @@ this.dispatchEvent(new ShowToastEvent({ title, message, variant }));
 // Track reactive state
 @track formData = { empName: '', empId: '' ... };
 ```
+# Student Management System - Salesforce Apex & Visualforce
+
+## Apex Controller: StudentController.cls
+
+```java
+public class StudentController {
+
+    public Student__c stu {get; set;}
+    public List<Student__c> studentList {get; set;}
+
+    public StudentController(){
+        stu = new Student__c();
+
+        studentList = [
+            SELECT Id, Name, Roll_No__c, Class__c, Mobile_No__c
+            FROM Student__c
+            ORDER BY Roll_No__c
+        ];
+    }
+
+    // CREATE
+    public PageReference saveStudent(){
+
+        insert stu;
+
+        return Page.StudentListPage;
+    }
+
+    // EDIT PAGE
+    public PageReference editStudent(){
+
+        Id sid = ApexPages.currentPage()
+        .getParameters().get('sid');
+
+        stu = [
+            SELECT Id, Name, Roll_No__c,
+            Class__c, Mobile_No__c
+            FROM Student__c
+            WHERE Id=:sid
+        ];
+
+        return Page.UpdateStudentPage;
+    }
+
+    // UPDATE
+    public PageReference updateStudent(){
+
+        update stu;
+
+        return Page.StudentListPage;
+    }
+
+    // DELETE
+    public PageReference deleteStudent(){
+
+        Id sid=ApexPages.currentPage()
+        .getParameters().get('sid');
+
+        Student__c s=
+        [SELECT Id FROM Student__c WHERE Id=:sid];
+
+        delete s;
+
+        return Page.StudentListPage;
+    }
+}
+<apex:page controller="StudentController">
+
+<apex:form>
+
+<apex:pageBlock title="Student Management System">
+
+<apex:pageBlockSection columns="1">
+
+<apex:inputField value="{!stu.Name}"/>
+
+<apex:inputField value="{!stu.Roll_No__c}"/>
+
+<apex:inputField value="{!stu.Class__c}"/>
+
+<apex:inputField value="{!stu.Mobile_No__c}"/>
+
+</apex:pageBlockSection>
+
+<apex:commandButton
+value="Save"
+action="{!saveStudent}"/>
+
+<apex:commandButton
+value="View Records"
+action="{!StudentListPage}"/>
+
+</apex:pageBlock>
+
+</apex:form>
+
+</apex:page>
